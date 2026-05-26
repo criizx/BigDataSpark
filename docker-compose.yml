@@ -1,0 +1,73 @@
+networks:
+  spark-net:
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+
+services:
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    networks: [ spark-net ]
+    environment:
+      POSTGRES_USER: spark
+      POSTGRES_PASSWORD: spark123
+      POSTGRES_DB: bigdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init_postgres.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./mock_data:/mock_data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U spark -d bigdata" ]
+      interval: 10s
+      retries: 5
+
+  csv-loader:
+    image: postgres:15-alpine
+    container_name: csv-loader
+    networks: [ spark-net ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./mock_data:/mock_data
+      - ./sql/load_csv.sh:/load_csv.sh
+    command: [ "/bin/sh", "/load_csv.sh" ]
+    environment:
+      PGHOST: postgres
+      PGUSER: spark
+      PGPASSWORD: spark123
+      PGDATABASE: bigdata
+    restart: "no"
+
+  spark:
+    image: apache/spark:3.5.0
+    container_name: spark
+    networks: [ spark-net ]
+    command: [ "tail", "-f", "/dev/null" ]
+    volumes:
+      - ./spark_jobs:/opt/spark_jobs
+      - ./spark_jobs/jars:/opt/jars
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24
+    container_name: clickhouse
+    networks: [ spark-net ]
+    environment:
+      CLICKHOUSE_USER: spark
+      CLICKHOUSE_PASSWORD: spark123
+      CLICKHOUSE_DB: reports
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./sql/init_clickhouse.sql:/docker-entrypoint-initdb.d/01_init.sql
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
